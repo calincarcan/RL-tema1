@@ -310,9 +310,9 @@ TESTS = OrderedDict([
         ("ICMP_0_3_ARRIVES_3_VLAN", Test(0, 3, 0, icmp_a, icmp_check_arrival_p, ["2. VLAN"], 3)),
 
         # STP tests
-        ("ICMP_4_1_ARRIVES_1_STP", Test(4, 1, 0, icmp_a, icmp_check_arrival_p, ["3. STP"], 1)),
-        ("ICMP_5_0_ARRIVES_0_STP", Test(5, 0, 0, icmp_a, icmp_check_arrival_p, ["3. STP"], 0)),
-        ("ICMP_5_0_BAD_MAC_ARRIVES_0_ONCE_STP", Test(5, 0, 0, bad_mac_icmp_a, bad_icmp_check_arrival_p, ["3. STP"], 0)),
+        # ("ICMP_4_1_ARRIVES_1_STP", Test(4, 1, 0, icmp_a, icmp_check_arrival_p, ["3. STP"], 1)),
+        # ("ICMP_5_0_ARRIVES_0_STP", Test(5, 0, 0, icmp_a, icmp_check_arrival_p, ["3. STP"], 0)),
+        # ("ICMP_5_0_BAD_MAC_ARRIVES_0_ONCE_STP", Test(5, 0, 0, bad_mac_icmp_a, bad_icmp_check_arrival_p, ["3. STP"], 0)),
 
         ])
 

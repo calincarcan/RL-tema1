@@ -26,7 +26,7 @@ $(BINARY): $(OBJECTS)
 	$(CC) $(INCFLAGS) $(CFLAGS) -fPIC $< -o $@
 
 clean:
-	rm -rf $(OBJECTS)  hosts_output router_* dlink.so
+	rm -rf $(OBJECTS)  hosts_output router_* dlink.so *_err *_out
 
 run_switch: all
 	python3 switch.py $(SWITCH_ID) $$(ifconfig -a | grep -o '^[^ :]*' | grep -v 'lo' | tr '\n' ' ')
