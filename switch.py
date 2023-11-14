@@ -6,6 +6,9 @@ import threading
 import time
 from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interface_name
 
+global root_bridge_ID, root_path_cost, own_bridge_ID
+global interfaces, interface_state, vlan, table
+
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
     #dest_mac, src_mac, ethertype = struct.unpack('!6s6sH', data[:14])
@@ -30,8 +33,19 @@ def create_vlan_tag(vlan_id):
     return struct.pack('!H', 0x8200) + struct.pack('!H', vlan_id & 0x0FFF)
 
 def send_bdpu_every_sec():
-    # while True:
-        # TODO Send BDPU every second if necessary
+    # TODO Send BDPU every second if necessary
+    while True:
+        if own_bridge_ID == root_bridge_ID:
+            for interface in interfaces:
+                if vlan.get(get_interface_name(interface)) != 'T':
+                    continue
+                mac_cast = struct.pack('!BBBBBB', 0x01, 0x80, 0xc3, 0x00, 0x00, 0x00)
+                own_bid = struct.pack('!q', own_bridge_ID)
+                root_bid = struct.pack('!q', root_bridge_ID)
+                cost_path = struct.pack('!I', root_path_cost)
+                data = mac_cast + own_bid + root_bid + cost_path
+                send_to_link(interface, data, len(data))
+                print('sent BDPU on interface ', interface, ' with data ', data, ' and length ', len(data))
         time.sleep(1)
 
 def is_Unicast(mac):
@@ -45,12 +59,15 @@ def init_resources():
     own_bridge_ID = root_bridge_ID = -1
     num_interfaces = wrapper.init(sys.argv[2:])
     interfaces = range(0, num_interfaces)
-    interface_state = [False] * num_interfaces
+    interface_state = [True] * num_interfaces
 
     name = 'configs/switch'+switch_id+'.cfg'
     
     f = open(name, 'r')
-    own_bridge_ID = root_bridge_ID = f.readline().strip()
+    own_bridge_ID = f.readline().strip()
+    own_bridge_ID = int(own_bridge_ID)
+    root_bridge_ID = own_bridge_ID
+    root_path_cost = 0
 
     for line in f:
         line = line.strip()
@@ -60,8 +77,12 @@ def init_resources():
     print("# Starting switch with id {}".format(switch_id), flush=True)
     print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
     print(vlan)
+
+    # for interface in interfaces:
+    #     if vlan.get(get_interface_name(interface)) == 'T':
+    #         interface_state[interface] = False
     
-    return table, vlan, switch_id, own_bridge_ID, root_bridge_ID, num_interfaces, interfaces, interface_state
+    return table, vlan, switch_id, own_bridge_ID, root_bridge_ID, root_path_cost, num_interfaces, interfaces, interface_state
 
     # b1 = bytes([72, 101, 108, 108, 111])  # "Hello"
     # b2 = bytes([32, 87, 111, 114, 108, 100])  # " World"
@@ -172,12 +193,70 @@ def check_for_trunk(vlan_src: int):
     return vlan_src == 0
 
 def main():
-    table, vlan, switch_id, own_bridge_ID, root_bridge_ID, num_interfaces, interfaces, interface_state = init_resources()
+    table, vlan, switch_id, own_bridge_ID, root_bridge_ID, root_path_cost, num_interfaces, interfaces, interface_state = init_resources()
+    root_port = None
+
     t = threading.Thread(target=send_bdpu_every_sec)
     t.start()
 
     while True:
         interface, data, length = recv_from_any_link()
+        if interface_state[interface] == False:
+            continue
+        mac_cast = data[0:6]
+
+        #           6 bytes  8 bytes  8 bytes  4 bytes
+        # data = mac_cast + own_bid + root_bid + cost_path
+        if mac_cast == b'\x01\x80\xc2\x00\x00\x00':
+            bpdu_src_bid = data[6:14]
+            bpdu_root_bid = data[14:22]
+            bpdu_cost_path = data[22:26]
+            bpdu_cost_path = int.from_bytes(bpdu_cost_path, byteorder='big')
+
+            we_were_root = None
+            if own_bridge_ID == root_bridge_ID:
+                we_were_root = True
+
+            if bpdu_root_bid < root_bridge_ID:
+                root_bridge_ID = bpdu_root_bid
+                root_path_cost = bpdu_cost_path + 10
+                root_port = interface
+
+                if we_were_root:
+                    for i in interfaces:
+                        if i != root_port and vlan.get(get_interface_name(i)) == 'T':
+                            interface_state[i] = False
+
+                if interface_state[root_port] == False:
+                    interface_state[root_port] = True
+
+                mac_cast = struct.pack('!BBBBBB', 0x01, 0x80, 0xc3, 0x00, 0x00, 0x00)
+                own_bid = struct.pack('!q', own_bridge_ID)
+                root_bid = struct.pack('!q', root_bridge_ID)
+                cost_path = struct.pack('!I', root_path_cost)
+                data = mac_cast + own_bid + root_bid + cost_path
+                for i in interfaces:
+                    if i != root_port and vlan.get(get_interface_name(i)) == 'T':
+                        send_to_link(i, data, len(data))
+                        print('updated BDPU on interface ', i, ' with data ', data, ' and length ', len(data))
+
+            elif bpdu_root_bid == root_bridge_ID:
+                if interface == root_port and bpdu_cost_path + 10 < root_path_cost:
+                    root_path_cost = bpdu_cost_path + 10
+                
+                elif interface != root_port and bpdu_cost_path > root_path_cost:
+                    # TODO: posibil incorect
+                    interface_state[interface] = True
+
+            elif bpdu_src_bid == own_bridge_ID:
+                interface_state[interface] = False
+            
+            if own_bridge_ID == root_bridge_ID:
+                for i in interfaces:
+                    if i != root_port and vlan.get(get_interface_name(i)) == 'T':
+                        interface_state[i] = True
+            continue
+        
         dest_mac, src_mac, ethertype, vlan_id = parse_ethernet_header(data)
 
         if vlan_id == -1:

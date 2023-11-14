@@ -5,3 +5,4 @@ sim/__pycache__
 *_err
 *_out
 hosts_output/*
+test.py
