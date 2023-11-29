@@ -6,9 +6,6 @@ import threading
 import time
 from wrapper import recv_from_any_link, send_to_link, get_switch_mac, get_interface_name
 
-global root_bridge_ID, root_path_cost, own_bridge_ID
-global interfaces, interface_state, vlan, table
-
 def parse_ethernet_header(data):
     # Unpack the header fields from the byte array
     #dest_mac, src_mac, ethertype = struct.unpack('!6s6sH', data[:14])
@@ -33,24 +30,25 @@ def create_vlan_tag(vlan_id):
     return struct.pack('!H', 0x8200) + struct.pack('!H', vlan_id & 0x0FFF)
 
 def send_bdpu_every_sec():
+    global root_bridge_ID, root_path_cost, own_bridge_ID
+    global interfaces, interface_state, vlan, table
     # TODO Send BDPU every second if necessary
     while True:
         if own_bridge_ID == root_bridge_ID:
             for interface in interfaces:
                 if vlan.get(get_interface_name(interface)) != 'T':
                     continue
-                mac_cast = struct.pack('!BBBBBB', 0x01, 0x80, 0xc3, 0x00, 0x00, 0x00)
+                mac_cast = struct.pack('!BBBBBB', 0x01, 0x80, 0xc2, 0x00, 0x00, 0x00)
                 own_bid = struct.pack('!q', own_bridge_ID)
                 root_bid = struct.pack('!q', root_bridge_ID)
                 cost_path = struct.pack('!I', root_path_cost)
                 data = mac_cast + own_bid + root_bid + cost_path
                 send_to_link(interface, data, len(data))
-                print('sent BDPU on interface ', interface, ' with data ', data, ' and length ', len(data))
+                # print('sent BDPU on interface ', interface, ' with data ', data, ' and length ', len(data))
         time.sleep(1)
 
 def is_Unicast(mac):
     return mac[0] & 1 == 0
-    # return mac != b'\xff\xff\xff\xff\xff\xff'
 
 def init_resources():
     table = {}
@@ -71,24 +69,17 @@ def init_resources():
 
     for line in f:
         line = line.strip()
-        print('line: ', line)
+        # print('line: ', line)
         vlan.update({line.split()[0]: line.split()[1]})
 
-    print("# Starting switch with id {}".format(switch_id), flush=True)
-    print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
-    print(vlan)
-
-    # for interface in interfaces:
-    #     if vlan.get(get_interface_name(interface)) == 'T':
-    #         interface_state[interface] = False
+    # print("# Starting switch with id {}".format(switch_id), flush=True)
+    # print("[INFO] Switch MAC", ':'.join(f'{b:02x}' for b in get_switch_mac()))
+    # print(vlan)
     
     return table, vlan, switch_id, own_bridge_ID, root_bridge_ID, root_path_cost, num_interfaces, interfaces, interface_state
 
-    # b1 = bytes([72, 101, 108, 108, 111])  # "Hello"
-    # b2 = bytes([32, 87, 111, 114, 108, 100])  # " World"
-
 def inspect(dest_mac, src_mac, ethertype, vlan_id, interface, length):
-    # Print the MAC src and MAC dst in human readable format
+    # # print the MAC src and MAC dst in human readable format
     p_dest_mac = ':'.join(f'{b:02x}' for b in dest_mac)
     p_src_mac = ':'.join(f'{b:02x}' for b in src_mac)
     print(f'Destination MAC: {p_dest_mac}')
@@ -103,52 +94,52 @@ def translate_trunk(vlan: str) -> int:
         return 0
     return int(vlan)
 
-def trunk_forwarding(dest_mac, vlan_id: int, interface, data, length, table, vlan, interfaces):
+def trunk_forwarding(dest_mac, vlan_id: int, interface, data, length, table, vlan, interfaces, interface_state):
     notag_data = data[0:12] + data[16:]
-    print('TRUNK Forwarding')
+    # print('TRUNK Forwarding')
     if is_Unicast(dest_mac):
-        print('Unicast')
+        # print('Unicast')
         if dest_mac in table:
             vlan_path = vlan.get(get_interface_name(table.get(dest_mac)))
             vlan_path = translate_trunk(vlan_path)
             # pachetul se duce pe trunk
             if vlan_path == 0:
                 send_to_link(table.get(dest_mac), data, length)
-                print('sent to trunk next hop')
+                # print('sent to trunk next hop')
             else:
                 send_to_link(table.get(dest_mac), notag_data, length - 4)
-                print('sent to acces next hop')
+                # print('sent to acces next hop')
         else:
-            print('broadcast')
+            # print('broadcast')
             for i in interfaces:
-                if i == interface:
+                if i == interface or interface_state[i] == False:
                     continue
                 vlan_path = vlan.get(get_interface_name(i))
                 vlan_path = translate_trunk(vlan_path)
                 if vlan_path == 0:
                     send_to_link(i, data, length)
-                    print('sent to trunk')
+                    # print('sent to trunk')
                 elif vlan_path == vlan_id:
                     send_to_link(i, notag_data, length - 4)
-                    print('sent to acces')
+                    # print('sent to acces')
     else:
-        print('Multicast')
+        # print('Multicast')
         for i in interfaces:
-            if i == interface:
+            if i == interface or interface_state[i] == False:
                 continue
             vlan_path = vlan.get(get_interface_name(i))
             vlan_path = translate_trunk(vlan_path)
             if vlan_path == 0:
                 send_to_link(i, data, length)
-                print('sent to trunk')
+                # print('sent to trunk')
             elif vlan_path == vlan_id:
                 send_to_link(i, notag_data, length - 4)
-                print('sent to acces')
+                # print('sent to acces')
 
-def access_forwarding(dest_mac, vlan_id: int, interface, data, length, table, vlan, interfaces):
-    print('ACCES Forwarding')
+def access_forwarding(dest_mac, vlan_id: int, interface, data, length, table, vlan, interfaces, interface_state):
+    # print('ACCES Forwarding')
     if is_Unicast(dest_mac):
-        print('Unicast')
+        # print('Unicast')
         if dest_mac in table:
             vlan_path = vlan.get(get_interface_name(table.get(dest_mac)))
             vlan_path = translate_trunk(vlan_path)
@@ -156,43 +147,45 @@ def access_forwarding(dest_mac, vlan_id: int, interface, data, length, table, vl
             if vlan_path == 0:
                 tagged_frame = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
                 send_to_link(table.get(dest_mac), tagged_frame, length + 4)
-                print('sent to trunk next hop')
+                # print('sent to trunk next hop')
             else:
                 send_to_link(table.get(dest_mac), data, length)
-                print('sent to acces next hop')
+                # print('sent to acces next hop')
         else:
-            print('broadcast')
+            # print('broadcast')
             for i in interfaces:
-                if i == interface:
+                if i == interface or interface_state[i] == False:
                     continue
                 vlan_path = vlan.get(get_interface_name(i))
                 vlan_path = translate_trunk(vlan_path)
                 if vlan_path == 0:
                     tagged_frame = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
                     send_to_link(i, tagged_frame, length + 4)
-                    print('sent to trunk')
+                    # print('sent to trunk')
                 elif vlan_path == vlan_id:
                     send_to_link(i, data, length)
-                    print('sent to acces')
+                    # print('sent to acces')
     else:
-        print('Multicast')
+        # print('Multicast')
         for i in interfaces:
-            if i == interface:
+            if i == interface or interface_state[i] == False:
                 continue
             vlan_path = vlan.get(get_interface_name(i))
             vlan_path = translate_trunk(vlan_path)
             if vlan_path == 0:
                 tagged_frame = data[0:12] + create_vlan_tag(vlan_id) + data[12:]
                 send_to_link(i, tagged_frame, length + 4)
-                print('sent to trunk')
+                # print('sent to trunk')
             elif vlan_path == vlan_id:
                 send_to_link(i, data, length)
-                print('sent to acces')
+                # print('sent to acces')
 
 def check_for_trunk(vlan_src: int):
     return vlan_src == 0
 
 def main():
+    global root_bridge_ID, root_path_cost, own_bridge_ID
+    global interfaces, interface_state, vlan, table
     table, vlan, switch_id, own_bridge_ID, root_bridge_ID, root_path_cost, num_interfaces, interfaces, interface_state = init_resources()
     root_port = None
 
@@ -200,6 +193,8 @@ def main():
     t.start()
 
     while True:
+        # if own_bridge_ID == root_bridge_ID:
+            # print('I AM ROOOOOT')
         interface, data, length = recv_from_any_link()
         if interface_state[interface] == False:
             continue
@@ -207,13 +202,17 @@ def main():
 
         #           6 bytes  8 bytes  8 bytes  4 bytes
         # data = mac_cast + own_bid + root_bid + cost_path
+        # print('found mac_cast: ', mac_cast)
         if mac_cast == b'\x01\x80\xc2\x00\x00\x00':
+            # print('entered bpdu check')
             bpdu_src_bid = data[6:14]
+            bpdu_src_bid = int.from_bytes(bpdu_src_bid, byteorder='big')
             bpdu_root_bid = data[14:22]
+            bpdu_root_bid = int.from_bytes(bpdu_root_bid, byteorder='big')
             bpdu_cost_path = data[22:26]
             bpdu_cost_path = int.from_bytes(bpdu_cost_path, byteorder='big')
 
-            we_were_root = None
+            we_were_root = False
             if own_bridge_ID == root_bridge_ID:
                 we_were_root = True
 
@@ -238,14 +237,13 @@ def main():
                 for i in interfaces:
                     if i != root_port and vlan.get(get_interface_name(i)) == 'T':
                         send_to_link(i, data, len(data))
-                        print('updated BDPU on interface ', i, ' with data ', data, ' and length ', len(data))
+                        # print('updated BDPU on interface ', i, ' with data ', data, ' and length ', len(data))
 
             elif bpdu_root_bid == root_bridge_ID:
                 if interface == root_port and bpdu_cost_path + 10 < root_path_cost:
                     root_path_cost = bpdu_cost_path + 10
                 
                 elif interface != root_port and bpdu_cost_path > root_path_cost:
-                    # TODO: posibil incorect
                     interface_state[interface] = True
 
             elif bpdu_src_bid == own_bridge_ID:
@@ -263,7 +261,7 @@ def main():
             vlan_id = vlan.get(get_interface_name(interface))
             vlan_id = translate_trunk(vlan_id)
             
-        inspect(dest_mac, src_mac, ethertype, vlan_id, interface, length)
+        # inspect(dest_mac, src_mac, ethertype, vlan_id, interface, length)
 
         # TODO: Implement forwarding with learning
         table.update({src_mac: interface})
@@ -271,33 +269,22 @@ def main():
         vlan_src = vlan.get(get_interface_name(interface))
         vlan_src = translate_trunk(vlan_src)
 
-        # print("NORMAL Forwarding")
-        # if is_Unicast(dest_mac):
-        #     if dest_mac in table:
-        #         send_to_link(table.get(dest_mac), data, length)
-        #     else:
-        #         for i in interfaces:
-        #             if i != interface:
-        #                 send_to_link(i, data, length)
-        # else:
-        #     for i in interfaces:
-        #         if i != interface:
-        #             send_to_link(i, data, length)
-
         if check_for_trunk(vlan_src):
             trunk_forwarding(dest_mac, 
                              vlan_id, 
                              interface, 
                              data, length, 
                              table, vlan, 
-                             interfaces)
+                             interfaces,
+                             interface_state)
         else:
             access_forwarding(dest_mac, 
                               vlan_id, 
                               interface, 
                               data, length, 
                               table, vlan, 
-                              interfaces)
+                              interfaces,
+                              interface_state)
             
         # TODO: Implement VLAN support
         # TODO: Implement STP support
